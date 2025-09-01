@@ -195,7 +195,8 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ steps.image_repo.outputs.repo }}:${{ github.ref_name }}
+          # Scan the exact tag we just pushed (from docker/metadata-action)
+          image-ref: ${{ steps.image_repo.outputs.repo }}:${{ steps.meta.outputs.version }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           format: table
