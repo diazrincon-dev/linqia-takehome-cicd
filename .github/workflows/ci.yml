@@ -149,7 +149,7 @@ jobs:
     needs: [lint_test_matrix, coverage]
     env:
       DH_REPO: ${{ vars.DOCKERHUB_REPO }}
-      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
       DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Checkout
@@ -216,7 +216,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     env:
       DH_REPO: ${{ vars.DOCKERHUB_REPO }}
-      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
     steps:
       - name: Compose PR comment
         id: compose

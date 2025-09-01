@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DH_REPO: ${{ vars.DOCKERHUB_REPO }}
-      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
       DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Compute image repository

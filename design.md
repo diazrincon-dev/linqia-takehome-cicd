@@ -93,9 +93,12 @@ This document outlines the architecture, workflows, and artifacts of the CI/CD s
 
 ## Secrets and Configuration
 
-**Required secrets** (Settings → Secrets and variables → Actions):
+**Required variables** (Settings → Secrets and variables → Actions):
 
 * `DOCKERHUB_USERNAME` – Docker Hub username
+
+**Required secrets** (Settings → Secrets and variables → Actions):
+
 * `DOCKERHUB_TOKEN` – Docker Hub password or access token
 
 **Optional variables** (Settings → Secrets and variables → Actions → Variables):
@@ -164,7 +167,7 @@ docker pull $DOCKERHUB_REPO:<sha>
 
 ## Usage Instructions
 
-1. Configure `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` as repository secrets.
+1. Configure `DOCKERHUB_USERNAME`variable and `DOCKERHUB_TOKEN` secret for the repository.
 2. (Optional) Define `DOCKERHUB_REPO` in repository variables (`user/repo`). Defaults to `${DOCKERHUB_USERNAME}/linqia-takehome-cicd`.
 3. Open a pull request or push to `main`.
 
