@@ -244,19 +244,17 @@ jobs:
             const errs = `${{ needs.coverage.outputs.tests_errors }}`;
             const skips = `${{ needs.coverage.outputs.tests_skipped }}`;
             const imageRef = `${{ steps.compose.outputs.image_ref_tag }}`;
-            const imageSha = `${{ steps.compose.outputs.image_sha_tag }}`;
             const runUrl = `${{ steps.compose.outputs.run_url }}`;
             const repo = context.repo;
             const pr = context.payload.pull_request.number;
-            const hubLink = `https://hub.docker.com/r/${imageRef.split(':')[0]}/tags?name=${imageRef.split(':')[1]}`;
-            const body = [
-              `CI listo ✅`,
-              `Imagen: \`${imageRef}\``,
-              `Docker Hub: ${hubLink}`,
-              `Coverage: **${cov}%**`,
-              `Tests: total=${tests}, failures=${fails}, errors=${errs}, skipped=${skips}`,
-              `Artifacts y logs: ${runUrl}`,
-            ].join('\n');
+            const hubLink = 'https://hub.docker.com/r/' + imageRef.split(':')[0] + '/tags?name=' + imageRef.split(':')[1];
+            const body =
+              'CI summary\n' +
+              'Image: ' + imageRef + '\n' +
+              'Docker Hub: ' + hubLink + '\n' +
+              'Coverage: **' + cov + '%**\n' +
+              'Tests: total=' + tests + ', failures=' + fails + ', errors=' + errs + ', skipped=' + skips + '\n' +
+              'Artifacts and logs: ' + runUrl;
             await github.rest.issues.createComment({
               owner: repo.owner,
               repo: repo.repo,

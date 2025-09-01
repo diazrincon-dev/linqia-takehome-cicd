@@ -71,13 +71,13 @@ jobs:
             if (!prNum) { return; }
             const image = `${{ steps.pull.outputs.image }}`;
             const out = `${{ steps.run.outputs.output }}`;
-            const hubLink = `https://hub.docker.com/r/${image.split(':')[0]}/tags?name=${image.split(':')[1]}`;
+            const hubLink = 'https://hub.docker.com/r/' + image.split(':')[0] + '/tags?name=' + image.split(':')[1];
             const repo = context.repo;
             const body = [
-              `CD listo ✅`,
-              `Imagen desplegada (mock): \`${image}\``,
-              `Docker Hub: ${hubLink}`,
-              `Ejecución de prueba: \`docker run ... 2 3\` → salida \`${out}\``,
+              'CD summary',
+              'Deployed image (mock): ' + image,
+              'Docker Hub: ' + hubLink,
+              'Test run: docker run ... 2 3 -> output ' + out,
             ].join('\n');
             await github.rest.issues.createComment({
               owner: repo.owner,
