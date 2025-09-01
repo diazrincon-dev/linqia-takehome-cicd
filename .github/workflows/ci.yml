@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint_test_matrix:
+    name: Lint & Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: |
+          ruff --version
+          ruff check .
+
+      - name: Run tests (no coverage)
+        run: |
+          mkdir -p reports
+          pytest -q --junitxml=reports/junit-py${{ matrix.python-version }}.xml
+
+      - name: Upload test results (py${{ matrix.python-version }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: reports/junit-py${{ matrix.python-version }}.xml
+
+  coverage:
+    name: Coverage (py3.12)
+    runs-on: ubuntu-latest
+    needs: [lint_test_matrix]
+    outputs:
+      coverage_pct: ${{ steps.coverage_pct.outputs.value }}
+      tests_total: ${{ steps.junit_summary.outputs.tests_total }}
+      tests_failures: ${{ steps.junit_summary.outputs.tests_failures }}
+      tests_errors: ${{ steps.junit_summary.outputs.tests_errors }}
+      tests_skipped: ${{ steps.junit_summary.outputs.tests_skipped }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          mkdir -p reports
+          pytest -q --junitxml=reports/junit.xml \
+            --cov=sample_app --cov-report=xml:reports/coverage.xml --cov-report=term
+
+      - name: Extract coverage percentage (write file)
+        run: |
+          python - << 'PY'
+          import xml.etree.ElementTree as ET
+          p = 'reports/coverage.xml'
+          tree = ET.parse(p)
+          rate = float(tree.getroot().attrib.get('line-rate', '0')) * 100
+          val = f"{rate:.2f}"
+          print(val)
+          with open('reports/coverage.txt', 'w') as f:
+              f.write(val)
+          PY
+        shell: bash
+
+      - name: Set coverage output
+        id: coverage_pct
+        run: |
+          echo "value=$(cat reports/coverage.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize JUnit results
+        id: junit_summary
+        run: |
+          python - << 'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          p = 'reports/junit.xml'
+          t = ET.parse(p).getroot()
+          tests = failures = errors = skipped = 0
+          suites = []
+          if t.tag == 'testsuite':
+              suites = [t]
+          elif t.tag == 'testsuites':
+              suites = list(t)
+          for s in suites:
+              tests  += int(s.attrib.get('tests', 0))
+              failures += int(s.attrib.get('failures', 0))
+              errors += int(s.attrib.get('errors', 0))
+              skipped += int(s.attrib.get('skipped', 0))
+          out = os.environ.get('GITHUB_OUTPUT')
+          with open(out, 'a') as f:
+              f.write(f"tests_total={tests}\n")
+              f.write(f"tests_failures={failures}\n")
+              f.write(f"tests_errors={errors}\n")
+              f.write(f"tests_skipped={skipped}\n")
+          PY
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            reports/coverage.xml
+            reports/junit.xml
+            reports/coverage.txt
+
+  build_and_push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint_test_matrix, coverage]
+    env:
+      DH_REPO: ${{ vars.DOCKERHUB_REPO }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image repository
+        id: image_repo
+        run: |
+          REPO="${DH_REPO:-${DH_USER}/linqia-takehome-cicd}"
+          echo "DOCKERHUB_REPO=$REPO" >> "$GITHUB_ENV"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ env.DH_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image_repo.outputs.repo }}
+          tags: |
+            type=ref,event=branch
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Security scan (Trivy) [bonus]
+        if: always()
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          # Scan the exact tag we just pushed (from docker/metadata-action)
+          image-ref: ${{ steps.image_repo.outputs.repo }}:${{ steps.meta.outputs.version }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: 0
+
+      - name: Upload build metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-meta
+          path: |
+            ${{ github.workspace }}/.git/refs/heads/${{ github.ref_name }}
+          if-no-files-found: ignore
+
+  pr_comment:
+    name: PR Comment Summary
+    runs-on: ubuntu-latest
+    needs: [build_and_push, coverage]
+    if: ${{ github.event_name == 'pull_request' }}
+    env:
+      DH_REPO: ${{ vars.DOCKERHUB_REPO }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
+    steps:
+      - name: Compose PR comment
+        id: compose
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          SANITIZED_REF="${BRANCH//\//-}"
+          REPO="${DH_REPO:-${DH_USER}/linqia-takehome-cicd}"
+          IMAGE_REPO="$REPO"
+          IMAGE_REF_TAG="$IMAGE_REPO:$SANITIZED_REF"
+          IMAGE_SHA_TAG="$IMAGE_REPO:${GITHUB_SHA}"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "image_ref_tag=$IMAGE_REF_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_sha_tag=$IMAGE_SHA_TAG" >> "$GITHUB_OUTPUT"
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const cov = `${{ needs.coverage.outputs.coverage_pct }}`;
+            const tests = `${{ needs.coverage.outputs.tests_total }}`;
+            const fails = `${{ needs.coverage.outputs.tests_failures }}`;
+            const errs = `${{ needs.coverage.outputs.tests_errors }}`;
+            const skips = `${{ needs.coverage.outputs.tests_skipped }}`;
+            const imageRef = `${{ steps.compose.outputs.image_ref_tag }}`;
+            const runUrl = `${{ steps.compose.outputs.run_url }}`;
+            const repo = context.repo;
+            const pr = context.payload.pull_request.number;
+            const hubLink = 'https://hub.docker.com/r/' + imageRef.split(':')[0] + '/tags?name=' + imageRef.split(':')[1];
+            const body =
+              'CI summary\n' +
+              'Image: ' + imageRef + '\n' +
+              'Docker Hub: ' + hubLink + '\n' +
+              'Coverage: **' + cov + '%**\n' +
+              'Tests: total=' + tests + ', failures=' + fails + ', errors=' + errs + ', skipped=' + skips + '\n' +
+              'Artifacts and logs: ' + runUrl;
+            await github.rest.issues.createComment({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number: pr,
+              body,
+            });

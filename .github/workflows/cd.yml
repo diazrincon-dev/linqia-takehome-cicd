@@ -1,0 +1,87 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: cd-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    name: Mock Deploy
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      DH_REPO: ${{ vars.DOCKERHUB_REPO }}
+      DH_USER: ${{ vars.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Compute image repository
+        id: image_repo
+        run: |
+          REPO="${DH_REPO:-${DH_USER}/linqia-takehome-cicd}"
+          echo "DOCKERHUB_REPO=$REPO" >> "$GITHUB_ENV"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ env.DH_TOKEN }}
+
+      - name: Pull image built by CI
+        id: pull
+        run: |
+          REF="${{ github.event.workflow_run.head_branch }}"
+          # sanitize ref for tag (replace slashes with dashes)
+          REF_TAG="${REF//\//-}"
+          IMAGE_REF="$DOCKERHUB_REPO:$REF_TAG"
+          echo "Attempting to pull $IMAGE_REF"
+          if docker pull "$IMAGE_REF"; then
+            echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # fallback to sha tag
+          SHA_TAG="${{ github.event.workflow_run.head_sha }}"
+          IMAGE_SHA="$DOCKERHUB_REPO:$SHA_TAG"
+          echo "Falling back to $IMAGE_SHA"
+          docker pull "$IMAGE_SHA"
+          echo "image=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Run container (mock deploy)
+        id: run
+        run: |
+          OUT=$(docker run --rm ${{ steps.pull.outputs.image }} 2 3)
+          echo "output=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR (if exists)
+        if: ${{ github.event.workflow_run.event == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = (context.payload.workflow_run.pull_requests || []);
+            const prNum = prs.length > 0 ? prs[0].number : null;
+            if (!prNum) { return; }
+            const image = `${{ steps.pull.outputs.image }}`;
+            const out = `${{ steps.run.outputs.output }}`;
+            const hubLink = 'https://hub.docker.com/r/' + image.split(':')[0] + '/tags?name=' + image.split(':')[1];
+            const repo = context.repo;
+            const body = [
+              'CD summary',
+              'Deployed image (mock): ' + image,
+              'Docker Hub: ' + hubLink,
+              'Test run: docker run ... 2 3 -> output ' + out,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number: prNum,
+              body,
+            });
