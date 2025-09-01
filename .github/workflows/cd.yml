@@ -58,7 +58,15 @@ jobs:
       - name: Run container (mock deploy)
         id: run
         run: |
-          OUT=$(docker run --rm ${{ steps.pull.outputs.image }} 2 3)
+          set -euo pipefail
+          # Generate two random integers (0-100)
+          A=$((RANDOM % 101))
+          B=$((RANDOM % 101))
+          echo "Running container with args: $A $B"
+          OUT=$(docker run --rm ${{ steps.pull.outputs.image }} "$A" "$B")
+          echo "Container output: $OUT"
+          echo "a=$A" >> "$GITHUB_OUTPUT"
+          echo "b=$B" >> "$GITHUB_OUTPUT"
           echo "output=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Comment on PR (if exists)
@@ -77,7 +85,7 @@ jobs:
               'CD summary',
               'Deployed image (mock): ' + image,
               'Docker Hub: ' + hubLink,
-              'Test run: docker run ... 2 3 -> output ' + out,
+              'Test run: docker run ... ' + `${{ steps.run.outputs.a }}` + ' ' + `${{ steps.run.outputs.b }}` + ' -> output ' + out,
             ].join('\n');
             await github.rest.issues.createComment({
               owner: repo.owner,
